@@ -1,0 +1,69 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "Violence Detection System",
+  "projectDescription": "A real-time AI system that analyzes video footage to detect violent activities using a Temporal Segment Network (TSN) model with YOLOv8-based human masking and Grad-CAM visualizations.",
+  "theme": "aspen",
+  "primaryColor": "#DC2626",
+  "lightColor": "#FEF2F2",
+  "darkColor": "#7F1D1D",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/tsn-model",
+              "concepts/human-masking",
+              "concepts/gradcam"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/installation",
+              "guides/running-the-server",
+              "guides/using-the-web-client",
+              "guides/training"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/overview",
+              "api/predict",
+              "api/health"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Temporal Segment Network (TSN) with ResNet-18 backbone for video violence classification",
+    "YOLOv8-based human masking to focus inference on detected persons",
+    "Grad-CAM heatmap visualization highlighting the most active regions in a frame",
+    "Flask REST API accepting video uploads and returning predictions with confidence scores",
+    "Browser-based web client supporting file upload and live camera recording",
+    "Support for multiple video formats: MP4, AVI, MOV, MKV, WebM, M4V"
+  ],
+  "publicApiSurface": [
+    "GET / — service info",
+    "GET /health — health check",
+    "POST /predict — upload a video and receive violence prediction, confidence, person count, most active frame, and Grad-CAM visualization",
+    "run_inference(video_path) — core Python inference function",
+    "apply_human_mask(frame) — YOLOv8 person detection and frame masking",
+    "generate_gradcam(model, masked_frame, device, target_class) — Grad-CAM heatmap generation"
+  ]
+}
