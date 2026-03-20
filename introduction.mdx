@@ -1,0 +1,71 @@
+---
+title: "Introduction"
+description: "Real-time AI video analysis for violence detection using deep learning"
+---
+
+# Violence Detection System
+
+The Violence Detection System is an AI-powered application that analyzes video footage to detect violent activities in real time. It combines a Temporal Segment Network (TSN) classifier with YOLOv8 person detection and Grad-CAM visualizations to produce interpretable, confident predictions.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Set up and run the system in minutes
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how the pipeline works end-to-end
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Integrate via the REST API
+  </Card>
+  <Card title="Training Guide" icon="brain" href="/guides/training">
+    Train or fine-tune the TSN model
+  </Card>
+</CardGroup>
+
+## How it works
+
+A video is submitted to the Flask backend, either through the browser client or directly via the REST API. The system then runs through a three-stage pipeline:
+
+<Steps>
+  <Step title="Frame sampling">
+    The video is divided into 8 equal temporal segments. One representative frame is sampled from the center of each segment using the Temporal Segment Network (TSN) strategy.
+  </Step>
+  <Step title="Human masking">
+    YOLOv8 detects all persons in each sampled frame. Non-person regions are dimmed by a factor of 0.3, focusing the classifier exclusively on human activity.
+  </Step>
+  <Step title="Classification & visualization">
+    The masked frames are passed through a ResNet-18 backbone. Per-frame logits are averaged to produce a final **Violent / Non Violent** prediction with a confidence score. Grad-CAM generates a heatmap overlay on the most active frame for interpretability.
+  </Step>
+</Steps>
+
+## Key features
+
+- **TSN-based classification** — Temporal Segment Network with ResNet-18 for robust video-level violence detection
+- **YOLOv8 human masking** — focuses inference on detected persons, reducing background noise
+- **Grad-CAM visualization** — highlights the spatial regions most responsible for the prediction
+- **Flask REST API** — single `POST /predict` endpoint, easy to integrate into any pipeline
+- **Browser client** — supports drag-and-drop file upload and live camera recording (8-second capture)
+- **Multi-format support** — accepts MP4, AVI, MOV, MKV, WebM, and M4V video files
+
+## Project structure
+
+```
+violence-detection-system/
+├── app.py            # Flask REST API server
+├── model.py          # TSNModel definition and run_inference()
+├── masking.py        # YOLOv8 human masking (apply_human_mask)
+├── gradcam.py        # Grad-CAM heatmap generation
+├── utils.py          # Frame extraction, TSN sampling, base64 encoding
+├── requirements.txt  # Python dependencies
+├── model/
+│   └── tsn_masked_best.pth   # Pre-trained model weights
+├── yolov8n.pt        # YOLOv8 nano weights
+└── client/
+    ├── index.html    # Web UI
+    ├── app.js        # Frontend logic
+    └── style.css     # Styles
+```
+
+<Note>
+  The pre-trained weights (`model/tsn_masked_best.pth` and `yolov8n.pt`) must be present before starting the server. See the [installation guide](/guides/installation) for details.
+</Note>

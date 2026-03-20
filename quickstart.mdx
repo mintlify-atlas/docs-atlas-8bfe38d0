@@ -1,80 +1,159 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get a working violence detection prediction in under five minutes.
 ---
 
-## Get started in three steps
+<Steps>
+  <Step title="Check prerequisites">
+    Before you begin, make sure you have the following ready:
 
-Get your documentation site running locally and make your first customization.
+    - **Python 3.8 or later** — verify with `python --version`
+    - **pip** — included with Python 3.8+
+    - **Model weights** — two weight files must be present before starting the server:
 
-### Step 1: Set up your local environment
+    | File | Location |
+    |------|----------|
+    | `tsn_masked_best.pth` | `model/tsn_masked_best.pth` (relative to repo root) |
+    | `yolov8n.pt` | repo root (`./yolov8n.pt`) |
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    <Warning>
+      The server will fail to start if either weight file is missing. `tsn_masked_best.pth` is the trained TSN classifier; `yolov8n.pt` is downloaded automatically by Ultralytics on first run if it is not present, but placing it in the root directory avoids the download delay.
+    </Warning>
+  </Step>
 
-### Step 2: Deploy your changes
+  <Step title="Clone the repo and install dependencies">
+    <CodeGroup>
+      ```bash Clone
+      git clone <your-repo-url>
+      cd <repo-directory>
+      ```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+      ```bash Create virtual environment
+      python -m venv .venv
+      source .venv/bin/activate   # Windows: .venv\Scripts\activate
+      ```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+      ```bash Install dependencies
+      pip install -r requirements.txt
+      ```
+    </CodeGroup>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    The `requirements.txt` installs the following packages:
 
-### Step 3: Go live
+    ```text requirements.txt
+    flask
+    flask-cors
+    torch
+    torchvision
+    ultralytics
+    opencv-python
+    numpy
+    Pillow
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    <Tip>
+      On machines without a CUDA-capable GPU, PyTorch will run inference on the CPU automatically — no extra configuration is needed.
+    </Tip>
+  </Step>
 
-## Next steps
+  <Step title="Start the server">
+    ```bash
+    python app.py
+    ```
 
-Now that you have your docs running, explore these key features:
+    The Flask server binds to `0.0.0.0` and listens on **port 5001** by default.
 
-<CardGroup cols={2}>
+    ```
+     * Running on http://0.0.0.0:5001
+    ```
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+    To use a different port, set the `PORT` environment variable before starting:
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+    ```bash
+    PORT=8080 python app.py
+    ```
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+    <Note>
+      Port 5001 was chosen deliberately to avoid conflicts with local tooling that commonly occupies port 5000.
+    </Note>
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+    Confirm the server is healthy:
 
-</CardGroup>
+    ```bash
+    curl http://localhost:5001/health
+    ```
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+    ```json
+    {"status": "ok"}
+    ```
+  </Step>
+
+  <Step title="Make a prediction">
+    Send a video file to `POST /predict` using the `video` form field. The endpoint accepts the following formats: `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.m4v`.
+
+    ```bash
+    curl -X POST http://localhost:5001/predict \
+      -F "video=@/path/to/your/clip.mp4"
+    ```
+
+    The server samples **8 equally-spaced segments** from the video (deterministic middle-frame sampling per segment), applies a YOLOv8n person mask to each frame, and runs the TSN classifier.
+
+    A successful response looks like this:
+
+    ```json
+    {
+      "prediction": "Violent",
+      "confidence": 0.9173,
+      "person_count": 2,
+      "most_active_frame": 4,
+      "processing_time": 1.84,
+      "original_frame": "<base64-encoded JPEG>",
+      "masked_frame": "<base64-encoded JPEG>",
+      "gradcam_frame": "<base64-encoded JPEG>"
+    }
+    ```
+
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `prediction` | `string` | `"Violent"` or `"Non Violent"` |
+    | `confidence` | `number` | Softmax probability for the predicted class (0 – 1) |
+    | `person_count` | `integer` | Maximum number of persons detected in any single sampled frame |
+    | `most_active_frame` | `integer` | Index (0-based, out of 8) of the segment with the highest fight-class score |
+    | `processing_time` | `number` | Wall-clock seconds taken for inference |
+    | `original_frame` | `string` | Base64-encoded JPEG of the most active frame, unmodified |
+    | `masked_frame` | `string` | Base64-encoded JPEG with background dimmed (30 % brightness) outside detected persons |
+    | `gradcam_frame` | `string` | Base64-encoded JPEG of the Grad-CAM heatmap overlaid on the masked frame (`null` on error) |
+
+    <Note>
+      All three frame fields (`original_frame`, `masked_frame`, `gradcam_frame`) are standard base64-encoded JPEGs. Prefix them with `data:image/jpeg;base64,` to embed them directly in an HTML `<img>` tag.
+    </Note>
+
+    #### Error responses
+
+    | Status | Condition |
+    |--------|-----------|
+    | `400` | No `video` field in the request, empty filename, unreadable video, or codec error |
+    | `500` | Unexpected server-side error (details in `error` and `error_type` fields) |
+  </Step>
+
+  <Step title="Open the web client">
+    The repository ships a browser-based client in the `client/` directory. Open `client/index.html` directly in any modern browser — no build step required.
+
+    ```bash
+    open client/index.html        # macOS
+    xdg-open client/index.html    # Linux
+    start client/index.html       # Windows
+    ```
+
+    The client automatically targets `http://<hostname>:5001`. When opened from the local filesystem (`file://`) it falls back to `http://127.0.0.1:5001`.
+
+    <CardGroup cols={2}>
+      <Card title="Upload Video" icon="upload">
+        Click **Upload Video** to pick a file from disk. Supported formats: `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.m4v`. The analysis overlay displays the prediction, confidence score, person count, and all three frame visualizations.
+      </Card>
+      <Card title="Live Camera Scan" icon="video">
+        Click **Start Camera** to grant webcam access. The client records an **8-second clip** (after a 3-second countdown) and sends it to the same `/predict` endpoint automatically.
+      </Card>
+    </CardGroup>
+  </Step>
+</Steps>

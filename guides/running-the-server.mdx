@@ -1,0 +1,105 @@
+---
+title: "Running the server"
+description: Start the Flask backend and configure the server
+---
+
+The backend is a Flask application (`app.py`) that exposes a REST API for video analysis.
+
+## Starting the server
+
+```bash
+python app.py
+```
+
+By default, the server listens on port **5001**. This avoids conflicts with local tooling that often occupies port 5000.
+
+To use a different port, set the `PORT` environment variable:
+
+```bash
+PORT=8080 python app.py
+```
+
+## Verifying the server is running
+
+Send a health-check request:
+
+```bash
+curl http://localhost:5001/health
+```
+
+Expected response:
+
+```json
+{"status": "ok"}
+```
+
+## API endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Service info and available endpoints |
+| `GET` | `/health` | Health check — returns `{"status": "ok"}` |
+| `POST` | `/predict` | Analyze a video file and return predictions |
+
+### POST /predict
+
+Accepts a `multipart/form-data` request with a `video` field containing the video file.
+
+**Accepted video formats:** `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.m4v`
+
+**Example with curl:**
+
+```bash
+curl -X POST http://localhost:5001/predict \
+  -F "video=@/path/to/clip.mp4"
+```
+
+**Successful response fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `prediction` | string | `"Violent"` or `"Non Violent"` |
+| `confidence` | float | Softmax probability of the predicted class (0–1) |
+| `most_active_frame` | int | Index of the segment with the highest violence score |
+| `person_count` | int | Maximum number of persons detected across sampled frames |
+| `processing_time` | float | Wall-clock seconds to run inference |
+| `original_frame` | string | Base64-encoded JPEG of the most active frame (original) |
+| `masked_frame` | string | Base64-encoded JPEG of the most active frame (human-masked) |
+| `gradcam_frame` | string \| null | Base64-encoded JPEG of the Grad-CAM visualization |
+
+## Configuration
+
+### GPU vs CPU
+
+The device is selected automatically at startup:
+
+```python
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+```
+
+No manual configuration is required. If a CUDA-capable GPU is available and the CUDA-enabled PyTorch build is installed, the model runs on GPU.
+
+### CORS
+
+CORS is enabled for all origins via `flask-cors`. This allows the standalone web client (`client/index.html`) to call the API from any origin without additional configuration.
+
+### Temporary files
+
+Uploaded videos are written to a system temp file and deleted immediately after inference completes, regardless of whether the request succeeds or fails.
+
+## Production deployment
+
+<Warning>
+  The server starts with `debug=True`, which enables the Flask reloader and exposes a debugger PIN. Do not use this configuration in production.
+</Warning>
+
+For production, use a WSGI server such as Gunicorn:
+
+```bash
+pip install gunicorn
+gunicorn -w 2 -b 0.0.0.0:5001 app:app
+```
+
+<Note>
+  Inference is CPU/GPU-bound. Use `--workers 1` or `--workers 2` (not more) to avoid loading multiple model copies into VRAM.
+</Note>

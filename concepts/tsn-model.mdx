@@ -1,0 +1,118 @@
+---
+title: "TSN model"
+description: "Temporal Segment Network architecture for video classification"
+---
+
+The system uses a **Temporal Segment Network (TSN)** built on a ResNet-18 backbone to classify video clips as Violent or Non Violent. TSN addresses the challenge of long-range temporal modeling by dividing the video into segments and aggregating per-segment predictions.
+
+## Model architecture
+
+`TSNModel` inherits from `torch.nn.Module`. It wraps a standard ResNet-18 backbone with a replaced classification head:
+
+```python
+class TSNModel(nn.Module):
+    def __init__(self, num_classes=2, pretrained=False):
+        super().__init__()
+        weights = models.ResNet18_Weights.DEFAULT if pretrained else None
+        self.backbone = models.resnet18(weights=weights)
+        in_features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Linear(in_features, num_classes)
+
+    def forward(self, x):
+        # x: [B, K, 3, H, W]
+        B, K, C, H, W = x.shape
+        x = x.view(B * K, C, H, W)
+        x = self.backbone(x)          # [B*K, num_classes]
+        x = x.view(B, K, -1)          # [B, K, num_classes]
+        out = x.mean(dim=1)           # [B, num_classes]
+        return out
+```
+
+### Backbone modifications
+
+- Base model: `torchvision.models.resnet18`
+- The final fully-connected layer (`fc`) is replaced with `nn.Linear(512, 2)` — one output per class
+- `in_features` is read dynamically from the original `fc` layer, so the replacement is robust to architecture changes
+
+## Forward pass
+
+The model accepts a batched, multi-segment input tensor and processes all segments in a single backbone pass:
+
+| Step | Shape | Description |
+|------|-------|-------------|
+| Input | `[B, K, 3, H, W]` | Batch of B clips, K segments each |
+| Reshape | `[B*K, 3, H, W]` | Flatten segments into batch dimension |
+| Backbone | `[B*K, 2]` | ResNet-18 produces per-segment logits |
+| Reshape | `[B, K, 2]` | Restore batch and segment dimensions |
+| Mean | `[B, 2]` | Average logits over K segments |
+
+<Info>
+  Averaging logits (before softmax) rather than averaging probabilities is the standard TSN consensus function. Softmax is applied to the averaged logits during inference.
+</Info>
+
+## Inference configuration
+
+### Segment sampling
+
+`get_tsn_indices` is called with `num_segments=8` and `mode="val"` for all inference requests. In `val` mode, the center frame of each segment is selected deterministically:
+
+```python
+indices = get_tsn_indices(total_frames, num_segments=8, mode="val")
+```
+
+This ensures reproducible results for the same video regardless of when inference is run.
+
+### Input preprocessing
+
+Each frame is preprocessed with the following transform pipeline before being fed to the model:
+
+```python
+val_transform = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225]),
+])
+```
+
+| Parameter | Value |
+|-----------|-------|
+| Input size | 224×224 |
+| Normalization | ImageNet mean/std |
+| Mean | `[0.485, 0.456, 0.406]` |
+| Std | `[0.229, 0.224, 0.225]` |
+
+### Weights and device
+
+At startup, the model is loaded in inference mode:
+
+```python
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = TSNModel(num_classes=2, pretrained=False)
+model.load_state_dict(torch.load("model/tsn_masked_best.pth", map_location=device))
+model.to(device)
+model.eval()
+```
+
+- Weights file: `model/tsn_masked_best.pth`
+- `pretrained=False` — ImageNet weights are not loaded; only the trained state dict is applied
+- `map_location=device` ensures weights load correctly on both CUDA and CPU machines
+- `model.eval()` disables dropout and batch normalization training behavior
+
+<Tip>
+  During training, `pretrained=True` loads `ResNet18_Weights.DEFAULT` (ImageNet pretrained weights) as the starting point before fine-tuning on the violence detection dataset.
+</Tip>
+
+## Class labels
+
+| Index | Label |
+|-------|-------|
+| `0` | Non Violent |
+| `1` | Violent |
+
+The label mapping is applied after `torch.argmax` over the softmax output:
+
+```python
+label = "Violent" if pred_class == 1 else "Non Violent"
+```

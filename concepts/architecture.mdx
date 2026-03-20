@@ -1,0 +1,93 @@
+---
+title: "System architecture"
+description: "End-to-end pipeline overview"
+---
+
+The Violence Detection System processes an uploaded video through a series of stages — from raw frame sampling to a final JSON response containing prediction results and visualization frames.
+
+## Pipeline overview
+
+<Steps>
+  <Step title="Video input">
+    The Flask API receives a video file via `POST /predict`. The file is saved to a temporary path using `tempfile.mkstemp`, preserving the original file extension (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.m4v`). Unknown extensions default to `.mp4`.
+  </Step>
+  <Step title="Frame sampling">
+    `get_total_frames` reads the total frame count using OpenCV. `get_tsn_indices` then divides the video into **8 equal segments** and selects one frame per segment.
+
+    In `val` mode (used at inference time), the center frame of each segment is selected deterministically:
+
+    ```python
+    idx = (start + end) // 2
+    ```
+
+    This produces 8 frame indices spread evenly across the video's duration.
+  </Step>
+  <Step title="Frame extraction">
+    `extract_tsn_frames` sequentially decodes the video with OpenCV and fills the resolved frame list at the computed indices. Sequential decoding is used instead of random seeking for robustness with WebM/VP8/VP9 containers.
+  </Step>
+  <Step title="Human masking">
+    Each extracted frame is passed through `apply_human_mask`, which runs YOLOv8 nano (`yolov8n.pt`) to detect persons (COCO class 0). A float32 mask is initialized to `0.3` (dim factor) for all pixels. Bounding box regions of detected persons are set to `1.0`, preserving full brightness while dimming the background to 30%.
+
+    The function returns `(masked_frame, person_count)`. `person_count` is tracked as the maximum across all frames.
+  </Step>
+  <Step title="Tensor conversion">
+    `frame_to_tensor` converts each masked BGR frame to RGB, resizes to **224×224**, converts to a PyTorch tensor, and applies ImageNet normalization:
+
+    - Mean: `[0.485, 0.456, 0.406]`
+    - Std: `[0.229, 0.224, 0.225]`
+  </Step>
+  <Step title="TSN model forward pass">
+    The 8 frame tensors are stacked and batched into a `[1, 8, 3, 224, 224]` input tensor. The `TSNModel` reshapes this to `[8, 3, 224, 224]`, passes it through the ResNet-18 backbone, reshapes to `[1, 8, 2]`, and averages over the segment dimension to produce `[1, 2]` logits.
+
+    `torch.softmax` is applied to the averaged logits to obtain class probabilities.
+  </Step>
+  <Step title="Prediction">
+    The predicted class is determined by `torch.argmax` over the softmax probabilities.
+
+    | Class index | Label         |
+    |-------------|---------------|
+    | `0`         | Non Violent   |
+    | `1`         | Violent       |
+
+    Confidence is the softmax probability of the predicted class.
+  </Step>
+  <Step title="Most active frame selection">
+    Before averaging, per-frame logits `[1, 8, 2]` are computed by running the backbone on the flat `[8, 3, 224, 224]` tensor. The frame with the **highest Fight class logit** (class index 1) is identified as the most active frame:
+
+    ```python
+    fight_scores = per_frame_logits[0, :, 1]  # [8]
+    most_active_idx = torch.argmax(fight_scores).item()
+    ```
+  </Step>
+  <Step title="Grad-CAM visualization">
+    Grad-CAM runs on the most active masked frame. Forward and backward hooks are registered on `model.backbone.layer4[-1]` (the last residual block of ResNet-18). The gradient of the Fight class score with respect to that layer's activations is used to produce a `[7, 7]` class activation map, which is resized to the original frame dimensions and overlaid as a JET colormap heatmap.
+  </Step>
+  <Step title="JSON response">
+    The API returns a JSON object containing:
+
+    - `prediction` — `"Violent"` or `"Non Violent"`
+    - `confidence` — float in `[0, 1]`
+    - `most_active_frame` — segment index (0–7)
+    - `person_count` — max persons detected across all frames
+    - `processing_time` — wall-clock seconds for inference
+    - `original_frame` — base64-encoded JPEG of the most active raw frame
+    - `masked_frame` — base64-encoded JPEG of the most active masked frame
+    - `gradcam_frame` — base64-encoded JPEG of the Grad-CAM overlay, or `null` on error
+  </Step>
+</Steps>
+
+## Flask API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Service info and available endpoints |
+| `GET` | `/health` | Health check, returns `{"status": "ok"}` |
+| `POST` | `/predict` | Accepts `multipart/form-data` with a `video` field |
+
+<Note>
+  The temporary video file is always deleted in the `finally` block after inference completes, regardless of success or failure.
+</Note>
+
+## Error handling
+
+The `/predict` endpoint returns `400` for client errors (missing file, empty filename, unreadable video, codec errors) and `500` for unexpected server errors. Video-related exceptions are identified by inspecting the error message for tokens such as `"video"`, `"frame"`, `"decode"`, `"codec"`, and `"open"`.

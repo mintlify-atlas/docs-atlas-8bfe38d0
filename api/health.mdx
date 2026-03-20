@@ -1,0 +1,88 @@
+---
+title: "GET /health"
+description: "Check that the server is running"
+---
+
+Two lightweight endpoints are available for checking service availability: `/health` for a minimal liveness probe, and `/` for service metadata.
+
+---
+
+## GET /health
+
+Returns a fixed `ok` status. Use this endpoint as a liveness or readiness probe.
+
+**Method:** `GET`  
+**Path:** `/health`  
+**Parameters:** none
+
+### Example request
+
+```bash
+curl http://localhost:5001/health
+```
+
+### Response
+
+**200 — OK**
+
+<ResponseField name="status" type="string">
+  Always `"ok"` when the server is running and able to handle requests.
+</ResponseField>
+
+```json
+{
+  "status": "ok"
+}
+```
+
+---
+
+## GET /
+
+Returns service metadata and a directory of available endpoints. Useful for confirming the correct service is reachable before making inference calls.
+
+**Method:** `GET`  
+**Path:** `/`  
+**Parameters:** none
+
+### Example request
+
+```bash
+curl http://localhost:5001/
+```
+
+### Response
+
+**200 — OK**
+
+<ResponseField name="service" type="string">
+  The service identifier. Always `"violence-detection-backend"`.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current service status. Always `"running"` while the process is alive.
+</ResponseField>
+
+<ResponseField name="endpoints" type="object">
+  A map of named endpoints to their paths.
+
+  <Expandable title="endpoints fields">
+    <ResponseField name="endpoints.health" type="string">
+      Path to the health check endpoint: `"/health"`.
+    </ResponseField>
+    <ResponseField name="endpoints.predict" type="string">
+      Path and method for the inference endpoint: `"POST /predict"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "service": "violence-detection-backend",
+  "status": "running",
+  "endpoints": {
+    "health": "/health",
+    "predict": "POST /predict"
+  }
+}
+```

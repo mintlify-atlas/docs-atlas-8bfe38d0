@@ -1,0 +1,145 @@
+---
+title: "Grad-CAM visualization"
+description: "Gradient-weighted Class Activation Mapping for prediction interpretability"
+---
+
+Grad-CAM (Gradient-weighted Class Activation Mapping) generates a spatial heatmap that highlights which regions of a frame most influenced the model's prediction. It makes the classifier's reasoning interpretable by attributing importance back to the input pixels via gradients.
+
+## How it works
+
+Grad-CAM uses the gradients of the target class score with respect to the feature maps of a convolutional layer. Regions with high gradient-weighted activation correspond to areas the model "looked at" most when making its decision.
+
+<Info>
+  Grad-CAM runs on the **most active masked frame** — the frame with the highest Fight class logit (class index 1) across all 8 sampled segments. This is the frame that contributed most to a violent prediction.
+</Info>
+
+## Target layer
+
+The heatmap is computed from activations and gradients at `model.backbone.layer4[-1]` — the **last residual block** of the ResNet-18 backbone. This layer produces `[1, 512, 7, 7]` feature maps, balancing semantic richness and spatial resolution.
+
+## Function signature
+
+```python
+def generate_gradcam(model, masked_frame, device, target_class=1):
+    """
+    Generate a Grad-CAM heatmap overlay for a single frame.
+
+    Args:
+        model       : TSNModel instance (already loaded, eval mode)
+        masked_frame: numpy BGR frame (the most active masked frame)
+        device      : torch device
+        target_class: 1 = Fight (Violent), 0 = NonFight
+
+    Returns:
+        base64-encoded JPEG string of the heatmap overlaid on the frame
+        or None if something goes wrong
+    """
+```
+
+`target_class=1` (Fight/Violent) is the default and is what the API uses at inference time.
+
+## Computation steps
+
+<Steps>
+  <Step title="Preprocessing">
+    The masked frame is converted from BGR to RGB, resized to 224×224, and normalized with ImageNet mean/std using `val_transform`. The result is unsqueezed to `[1, 3, 224, 224]` and moved to the target device.
+  </Step>
+  <Step title="Register hooks">
+    A forward hook and a full backward hook are registered on `model.backbone.layer4[-1]`:
+
+    ```python
+    target_layer = model.backbone.layer4[-1]
+    fwd_handle   = target_layer.register_forward_hook(forward_hook)
+    bwd_handle   = target_layer.register_full_backward_hook(backward_hook)
+    ```
+
+    The forward hook captures `output.detach()` (activations). The backward hook captures `grad_output[0].detach()` (gradients with respect to that layer's output).
+  </Step>
+  <Step title="Forward pass">
+    `model.backbone(input_tensor)` is called to obtain `[1, 2]` logits and trigger the forward hook, storing the `[1, 512, 7, 7]` activation maps.
+  </Step>
+  <Step title="Backward pass">
+    The scalar score for the target class is extracted and backpropagated:
+
+    ```python
+    model.zero_grad()
+    class_score = output[0, target_class]
+    class_score.backward()
+    ```
+
+    This triggers the backward hook, storing the `[1, 512, 7, 7]` gradient tensor.
+  </Step>
+  <Step title="Compute weights">
+    Gradients are globally average-pooled over the spatial dimensions to produce a `[512]` weight vector — one scalar importance weight per channel:
+
+    ```python
+    weights = grads.mean(dim=(1, 2))  # [512]
+    ```
+  </Step>
+  <Step title="Weighted activation sum">
+    The `[7, 7]` class activation map (CAM) is computed as the weighted sum of activation channels:
+
+    ```python
+    cam = torch.zeros(acts.shape[1:], dtype=torch.float32)
+    for i, w in enumerate(weights):
+        cam += w * acts[i]
+    ```
+  </Step>
+  <Step title="ReLU and normalize">
+    ReLU is applied to suppress negative activations (regions that reduce the target class score). The result is normalized to `[0, 1]` by dividing by the maximum value, with a guard against divide-by-zero when all activations are zero.
+  </Step>
+  <Step title="Resize to frame dimensions">
+    The `[7, 7]` CAM is resized to the original frame's spatial dimensions using bilinear interpolation:
+
+    ```python
+    cam_resized = cv2.resize(cam_np, (w, h), interpolation=cv2.INTER_LINEAR)
+    ```
+  </Step>
+  <Step title="Apply colormap">
+    The normalized CAM is scaled to `uint8` range `[0, 255]` and the JET colormap is applied:
+
+    ```python
+    cam_uint8   = np.uint8(255 * cam_resized)
+    heatmap_bgr = cv2.applyColorMap(cam_uint8, cv2.COLORMAP_JET)
+    ```
+
+    In JET, blue indicates low activation and red indicates high activation.
+  </Step>
+  <Step title="Overlay and encode">
+    The heatmap is blended with the masked frame at equal weights:
+
+    ```python
+    overlay = cv2.addWeighted(masked_frame, 0.5, heatmap_bgr, 0.5, 0)
+    ```
+
+    The overlay is encoded as a base64 JPEG string via `encode_image_to_base64` and returned.
+  </Step>
+</Steps>
+
+## Hook cleanup
+
+Both hooks are removed in a `finally` block regardless of success or failure:
+
+```python
+fwd_handle.remove()
+bwd_handle.remove()
+```
+
+This prevents accumulation of hooks if `generate_gradcam` is called multiple times, which would cause duplicate gradient accumulation and memory leaks.
+
+<Warning>
+  If any step raises an exception, `generate_gradcam` catches it, prints the error, and returns `None`. The API response will contain `"gradcam_frame": null` in this case.
+</Warning>
+
+## Summary of tensor shapes
+
+| Artifact | Shape | Description |
+|----------|-------|-------------|
+| Input tensor | `[1, 3, 224, 224]` | Preprocessed single frame |
+| Activations | `[1, 512, 7, 7]` | `layer4[-1]` feature maps |
+| Gradients | `[1, 512, 7, 7]` | Gradients w.r.t. activations |
+| Weights | `[512]` | Global avg-pooled gradients |
+| CAM (raw) | `[7, 7]` | Weighted activation sum |
+| CAM (resized) | `[H, W]` | Scaled to original frame size |
+| Heatmap | `[H, W, 3]` | BGR colormap applied |
+| Overlay | `[H, W, 3]` | 50/50 blend with masked frame |

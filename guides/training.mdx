@@ -1,0 +1,180 @@
+---
+title: "Training the model"
+description: Train or fine-tune the TSN model on your own dataset
+---
+
+This guide covers the model architecture, data pipeline, and how to train or fine-tune the TSN model on a custom dataset. Reference notebooks are available in the `notebooks/` directory:
+
+- `TSN_Training (2).ipynb` — end-to-end TSN training loop
+- `TSNYOLO_2.ipynb` — training with YOLO-based human masking
+
+## Model architecture
+
+The `TSNModel` class (defined in `model.py`) uses a ResNet-18 backbone with a replaced classification head:
+
+```python
+class TSNModel(nn.Module):
+    def __init__(self, num_classes=2, pretrained=False):
+        super().__init__()
+        weights = models.ResNet18_Weights.DEFAULT if pretrained else None
+        self.backbone = models.resnet18(weights=weights)
+        in_features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Linear(in_features, num_classes)
+
+    def forward(self, x):
+        # x: [B, K, 3, H, W]
+        B, K, C, H, W = x.shape
+        x = x.view(B * K, C, H, W)
+        x = self.backbone(x)      # [B*K, num_classes]
+        x = x.view(B, K, -1)     # [B, K, num_classes]
+        out = x.mean(dim=1)       # [B, num_classes] — segment consensus
+        return out
+```
+
+**Class mapping:**
+
+| Index | Label |
+|---|---|
+| `0` | Non Violent |
+| `1` | Violent |
+
+## Initializing the model
+
+To initialize with ImageNet pre-trained weights (recommended for fine-tuning):
+
+```python
+from model import TSNModel
+
+model = TSNModel(num_classes=2, pretrained=True)
+```
+
+To initialize with random weights (training from scratch):
+
+```python
+model = TSNModel(num_classes=2, pretrained=False)
+```
+
+## Dataset structure
+
+Organize your videos by class label:
+
+```
+dataset/
+├── violent/
+│   ├── clip_001.mp4
+│   ├── clip_002.mp4
+│   └── ...
+└── non_violent/
+    ├── clip_001.mp4
+    ├── clip_002.mp4
+    └── ...
+```
+
+## Frame sampling — TSN indices
+
+The Temporal Segment Network divides each video into **8 equal segments** and samples one frame per segment. The sampling strategy differs between training and validation.
+
+```python
+from utils import get_tsn_indices
+
+# Training: random frame within each segment (data augmentation)
+train_indices = get_tsn_indices(total_frames, num_segments=8, mode="train")
+
+# Validation: deterministic center-frame per segment
+val_indices = get_tsn_indices(total_frames, num_segments=8, mode="val")
+```
+
+| Mode | Sampling strategy |
+|---|---|
+| `"train"` | Random frame within each segment |
+| `"val"` | Middle frame of each segment (deterministic) |
+
+## Input transform
+
+Apply the same transform used at inference time. Both mean and std follow ImageNet statistics:
+
+```python
+from torchvision import transforms
+
+transform = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+    ),
+])
+```
+
+## Human masking during training
+
+Apply `apply_human_mask` to each frame before converting it to a tensor. This dims the background and focuses the model on detected persons, which improves generalization:
+
+```python
+from masking import apply_human_mask
+from utils import frame_to_tensor
+
+for frame in frames:
+    masked_frame, person_count = apply_human_mask(frame)
+    tensor = frame_to_tensor(masked_frame, transform)
+    tensors.append(tensor)
+```
+
+<Note>
+  `apply_human_mask` runs YOLOv8n inference on every frame. On CPU this adds significant overhead. Use a GPU for training to keep masking fast.
+</Note>
+
+## Training loop outline
+
+```python
+import torch
+import torch.nn as nn
+from model import TSNModel
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = TSNModel(num_classes=2, pretrained=True).to(device)
+
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+criterion = nn.CrossEntropyLoss()
+
+for epoch in range(num_epochs):
+    model.train()
+    for input_tensor, label in train_loader:
+        # input_tensor shape: [B, 8, 3, 224, 224]
+        input_tensor = input_tensor.to(device)
+        label = label.to(device)
+
+        optimizer.zero_grad()
+        logits = model(input_tensor)
+        loss = criterion(logits, label)
+        loss.backward()
+        optimizer.step()
+```
+
+## Saving and loading weights
+
+**Save after training:**
+
+```python
+import torch
+
+torch.save(model.state_dict(), "model/tsn_masked_best.pth")
+```
+
+**Load for inference:**
+
+```python
+import torch
+from model import TSNModel
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = TSNModel(num_classes=2, pretrained=False)
+model.load_state_dict(torch.load("model/tsn_masked_best.pth", map_location=device))
+model.to(device)
+model.eval()
+```
+
+<Tip>
+  Use `map_location=device` when loading weights so a model trained on GPU can be loaded on a CPU-only machine without errors.
+</Tip>

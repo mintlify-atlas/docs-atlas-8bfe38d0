@@ -1,0 +1,87 @@
+---
+title: "Human masking"
+description: "YOLOv8-based person detection and background dimming"
+---
+
+Human masking is applied to every sampled frame before it is passed to the TSN classifier. The technique uses YOLOv8 to detect people and dims all non-person pixels, helping the model focus on human body motion rather than irrelevant background content.
+
+## Why masking helps
+
+Violence in video is defined by human actions, not the scene context. Without masking, a classifier can learn spurious correlations — for example, associating certain locations, lighting, or background objects with violent events. By preserving full brightness only in person bounding-box regions and dimming everything else to 30%, the input signal is biased toward the shapes, poses, and motion of people in the frame.
+
+<Info>
+  Masking is applied to every frame individually before tensor conversion. The TSN model never sees the unmasked background at full intensity during inference.
+</Info>
+
+## YOLO model
+
+Person detection uses the **YOLOv8 nano** model (`yolov8n.pt`), which balances speed and accuracy for real-time preprocessing:
+
+```python
+yolo_model = YOLO("yolov8n.pt")
+```
+
+The model is loaded once at module import time and reused for all frames. Persons correspond to **COCO class 0**.
+
+## `apply_human_mask` function
+
+```python
+def apply_human_mask(frame, dim_factor=0.3):
+    results = yolo_model(frame, verbose=False)
+    mask = np.full(frame.shape[:2], dim_factor, dtype=np.float32)
+    person_count = 0
+
+    for result in results:
+        for box in result.boxes:
+            cls = int(box.cls[0])
+            if cls == 0:  # person class
+                person_count += 1
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                mask[y1:y2, x1:x2] = 1.0
+
+    masked_frame = (frame * mask[:, :, np.newaxis]).astype(np.uint8)
+    return masked_frame, person_count
+```
+
+### Step-by-step breakdown
+
+<Steps>
+  <Step title="Run YOLO inference">
+    `yolo_model(frame, verbose=False)` runs the YOLOv8 nano detector on the raw BGR frame. `verbose=False` suppresses per-frame console output.
+  </Step>
+  <Step title="Initialize mask">
+    A float32 mask with the same spatial dimensions as the frame (`frame.shape[:2]`) is created and filled with `dim_factor=0.3`. This means every pixel starts at 30% brightness.
+  </Step>
+  <Step title="Fill person bounding boxes">
+    For each detected bounding box where the class is `0` (person), the mask region defined by `[y1:y2, x1:x2]` is set to `1.0`. Only COCO class 0 is considered — all other detected objects are ignored.
+  </Step>
+  <Step title="Apply mask and cast">
+    The mask is broadcast across the color channel axis with `mask[:, :, np.newaxis]` and multiplied elementwise against the frame. The result is cast to `uint8` to produce a valid image array.
+  </Step>
+  <Step title="Return result">
+    The function returns a tuple of `(masked_frame, person_count)` where `person_count` is the number of person detections in this frame.
+  </Step>
+</Steps>
+
+## Brightness behavior
+
+| Region | Mask value | Effect |
+|--------|------------|--------|
+| Person bounding box | `1.0` | Full brightness preserved |
+| Background | `0.3` | Dimmed to 30% of original |
+
+<Note>
+  When no persons are detected in a frame, the entire frame is dimmed to 30%. The `person_count` returned will be `0` for that frame.
+</Note>
+
+## Person count tracking
+
+In `run_inference`, `person_count` is accumulated as the **maximum** person count across all 8 sampled frames:
+
+```python
+for frame in frames:
+    masked_frame, count = apply_human_mask(frame)
+    person_count = max(person_count, count)
+```
+
+This reflects the peak number of simultaneous persons visible at any point in the sampled segment of the video, and is included in the API response.

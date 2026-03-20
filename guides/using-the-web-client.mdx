@@ -1,0 +1,107 @@
+---
+title: "Using the web client"
+description: Upload videos and use the live camera feature in the browser
+---
+
+The web client is a self-contained file at `client/index.html`. No build step or server is required — open it directly in your browser.
+
+```bash
+# macOS
+open client/index.html
+
+# Linux
+xdg-open client/index.html
+
+# Windows
+start client/index.html
+```
+
+## How the client connects to the server
+
+The API base URL is derived from the page's hostname at runtime:
+
+```javascript
+const API_BASE_URL = window.location.hostname
+  ? `${window.location.protocol}//${window.location.hostname}:5001`
+  : "http://127.0.0.1:5001";
+```
+
+When opened as a local file (`file://`), the hostname is empty, so the client falls back to `http://127.0.0.1:5001`. Make sure the Flask server is running on the same port before using the client.
+
+## Upload Evidence
+
+Use this mode to analyze a pre-recorded video file.
+
+<Steps>
+  <Step title="Click Upload Video">
+    Click the **Upload Video** button in the **Upload Evidence** card. A file picker will open.
+  </Step>
+
+  <Step title="Select a video file">
+    Select any supported video file (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.m4v`). Analysis starts automatically — no additional confirmation is needed.
+  </Step>
+
+  <Step title="View the results">
+    An **Analysis Result** dialog opens when inference completes. See [Reading the results](#reading-the-results) below.
+  </Step>
+</Steps>
+
+## Live Camera Monitor
+
+Use this mode to record a short clip from your device camera and analyze it.
+
+<Warning>
+  Camera access requires a **secure context**. The browser only grants `getUserMedia` permissions on `localhost` or over HTTPS. Opening the file over `file://` from a remote host will not work.
+</Warning>
+
+<Steps>
+  <Step title="Click Start Camera">
+    Click the **Start Camera** button in the **Live Camera Monitor** card. The browser will prompt you to allow camera access.
+  </Step>
+
+  <Step title="Countdown">
+    A 3-second countdown is displayed in the camera preview. Recording starts automatically when it reaches zero.
+  </Step>
+
+  <Step title="Recording">
+    The client records for **8 seconds**. A live countdown shows the remaining time. The camera stream stops automatically when recording ends.
+  </Step>
+
+  <Step title="Analysis">
+    The recording is sent to `POST /predict`. The **Analysis Result** dialog opens when inference completes.
+  </Step>
+</Steps>
+
+### Recording format
+
+The client selects the best supported MIME type in priority order:
+
+1. `video/webm;codecs=vp9`
+2. `video/webm;codecs=vp8`
+3. `video/webm`
+4. `video/mp4`
+
+The first type supported by `MediaRecorder` in the current browser is used.
+
+## Reading the results
+
+After inference completes, the result dialog shows:
+
+| Field | Description |
+|---|---|
+| **Prediction** | `Violent` or `Non Violent` |
+| **Confidence** | Softmax probability of the predicted class, shown as a percentage |
+| **Persons Detected** | Maximum number of persons detected across the 8 sampled frames |
+| **Most Active Frame Index** | Index (0–7) of the segment with the highest violence score |
+
+Three frame images are displayed below the metrics:
+
+| Image | Description |
+|---|---|
+| **Most Active Frame** | The original (unmodified) video frame from the most active segment |
+| **Masked Most Active Frame** | The same frame after human masking — background is dimmed |
+| **Grad-CAM Visualization** | Class activation map highlighting the regions that influenced the prediction |
+
+<Tip>
+  Click any of the three frame images to open a fullscreen view. Click the **×** button or outside the image to close it.
+</Tip>

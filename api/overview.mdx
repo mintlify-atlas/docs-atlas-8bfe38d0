@@ -1,0 +1,68 @@
+---
+title: "API overview"
+description: "REST API reference for the Violence Detection System"
+---
+
+The Violence Detection System exposes a REST API served by a Flask backend. All responses are JSON. No authentication is required.
+
+## Base URL
+
+```
+http://localhost:5001
+```
+
+The port is configurable via the `PORT` environment variable (defaults to `5001`).
+
+<Note>
+  CORS is enabled for all origins, so the API can be called directly from any browser-based client.
+</Note>
+
+## Endpoints
+
+<CardGroup cols={2}>
+  <Card title="GET /" icon="house">
+    Returns service name, status, and a list of available endpoints.
+  </Card>
+  <Card title="GET /health" icon="heart-pulse">
+    Lightweight health check. Returns `{"status": "ok"}` when the server is running.
+  </Card>
+  <Card title="POST /predict" icon="video">
+    Submit a video file for violence detection inference. Returns prediction, confidence, frame images, and more.
+  </Card>
+</CardGroup>
+
+## Endpoint summary
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Service info |
+| `GET` | `/health` | Health check |
+| `POST` | `/predict` | Violence detection inference |
+
+## Authentication
+
+None required.
+
+## Content types
+
+| Endpoint | Request content type | Response content type |
+|----------|----------------------|-----------------------|
+| `GET /` | — | `application/json` |
+| `GET /health` | — | `application/json` |
+| `POST /predict` | `multipart/form-data` | `application/json` |
+
+## Error responses
+
+All error responses include `error` and `error_type` fields.
+
+```json
+{
+  "error": "No video file provided",
+  "error_type": "ValueError"
+}
+```
+
+| Status | When |
+|--------|------|
+| `400` | Missing or empty video file, unreadable video, `ValueError` or `RuntimeError` from inference, video decode errors |
+| `500` | Unexpected server-side errors |

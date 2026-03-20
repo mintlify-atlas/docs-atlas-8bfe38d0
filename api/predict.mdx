@@ -1,0 +1,118 @@
+---
+title: "POST /predict"
+description: "Submit a video file for violence detection analysis"
+---
+
+Runs the TSN (Temporal Segment Network) model against the uploaded video and returns a violence prediction along with frame images and diagnostic data.
+
+## Request
+
+**Method:** `POST`  
+**Path:** `/predict`  
+**Content-Type:** `multipart/form-data`
+
+### Body parameters
+
+<ParamField body="video" type="file" required>
+  The video file to analyse. Must be a valid video in one of the accepted formats.
+
+  **Accepted formats:** `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.m4v`
+</ParamField>
+
+<Warning>
+  Sending a request without the `video` field, or with an empty filename, returns a `400` error immediately before any inference is attempted.
+</Warning>
+
+### Example request
+
+<CodeGroup>
+```bash curl
+curl -X POST http://localhost:5001/predict \
+  -F "video=@footage.mp4"
+```
+
+```python Python
+import requests
+
+with open("footage.mp4", "rb") as f:
+    response = requests.post(
+        "http://localhost:5001/predict",
+        files={"video": f},
+    )
+
+data = response.json()
+print(data["prediction"], data["confidence"])
+```
+</CodeGroup>
+
+## Response
+
+### 200 — Success
+
+<ResponseField name="prediction" type="string">
+  The model's classification result. One of `"Violent"` or `"Non Violent"`.
+</ResponseField>
+
+<ResponseField name="confidence" type="number">
+  Softmax probability of the predicted class, in the range `0.0`–`1.0`. Higher values indicate greater model certainty.
+</ResponseField>
+
+<ResponseField name="most_active_frame" type="integer">
+  Zero-based index of the sampled segment that produced the highest Fight class logit. This segment is used as the source for the returned frame images.
+</ResponseField>
+
+<ResponseField name="person_count" type="integer">
+  Maximum number of persons detected by YOLOv8 in any single sampled frame across the video.
+</ResponseField>
+
+<ResponseField name="processing_time" type="number">
+  Total server-side inference duration in seconds, measured from just before `run_inference` is called to just after it returns.
+</ResponseField>
+
+<ResponseField name="original_frame" type="string">
+  Base64-encoded JPEG of the most active frame as captured from the video, with no masking applied.
+</ResponseField>
+
+<ResponseField name="masked_frame" type="string">
+  Base64-encoded JPEG of the most active frame after YOLOv8 human masking has been applied. This is the frame the model actually processes.
+</ResponseField>
+
+<ResponseField name="gradcam_frame" type="string | null">
+  Base64-encoded JPEG of the Grad-CAM heatmap overlay on the most active frame, highlighting regions that influenced the prediction. `null` if Grad-CAM generation failed.
+</ResponseField>
+
+<Expandable title="Example response">
+```json
+{
+  "prediction": "Violent",
+  "confidence": 0.9231,
+  "most_active_frame": 4,
+  "person_count": 2,
+  "processing_time": 3.42,
+  "original_frame": "<base64-encoded JPEG>",
+  "masked_frame": "<base64-encoded JPEG>",
+  "gradcam_frame": "<base64-encoded JPEG>"
+}
+```
+</Expandable>
+
+### Error responses
+
+| Status | Cause | Example `error` value |
+|--------|-------|-----------------------|
+| `400` | No `video` field in request | `"No video file provided"` |
+| `400` | Empty filename | `"Empty filename"` |
+| `400` | Video has no readable frames | `"Uploaded video has no readable frames"` |
+| `400` | No frames could be extracted | `"No frames could be extracted from uploaded video"` |
+| `400` | `ValueError` or `RuntimeError` from inference | Message from the exception |
+| `400` | Video decode / codec error | Message from the exception |
+| `500` | Any other unexpected server error | Message from the exception |
+
+All error responses include both `error` (string message) and `error_type` (exception class name) fields.
+
+```json
+{
+  "error": "Uploaded video has no readable frames",
+  "error_type": "ValueError"
+}
+```

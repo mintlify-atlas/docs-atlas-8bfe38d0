@@ -1,0 +1,94 @@
+---
+title: "Installation"
+description: Set up the Violence Detection System from source
+---
+
+## Prerequisites
+
+Before you begin, make sure you have the following installed:
+
+- **Python 3.8+**
+- **pip** (comes with Python)
+- **git**
+- **CUDA** (optional but recommended — GPU inference is significantly faster than CPU)
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/your-org/violence-detection-system.git
+    cd violence-detection-system
+    ```
+  </Step>
+
+  <Step title="Create and activate a virtual environment">
+    Choose either `venv` (standard library) or `conda`:
+
+    <CodeGroup>
+
+    ```bash venv
+    python -m venv .venv
+
+    # Linux / macOS
+    source .venv/bin/activate
+
+    # Windows
+    .venv\Scripts\activate
+    ```
+
+    ```bash conda
+    conda create -n vds python=3.10
+    conda activate vds
+    ```
+
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    The following packages are installed:
+
+    | Package | Purpose |
+    |---|---|
+    | `flask` | HTTP server for the prediction API |
+    | `flask-cors` | Cross-origin request support |
+    | `torch` | PyTorch deep learning framework |
+    | `torchvision` | Image transforms and pre-trained models |
+    | `ultralytics` | YOLOv8 person detection |
+    | `opencv-python` | Video decoding and frame extraction |
+    | `numpy` | Numerical operations |
+    | `Pillow` | Image format support |
+  </Step>
+
+  <Step title="Place the model weights">
+    The TSN model weights must be placed at `model/tsn_masked_best.pth` relative to the project root:
+
+    ```bash
+    mkdir -p model
+    # copy or move your weights file
+    cp /path/to/tsn_masked_best.pth model/tsn_masked_best.pth
+    ```
+
+    <Note>
+      `yolov8n.pt` (the YOLOv8 nano weights) is loaded from the project root by `masking.py`. If the file is not present, Ultralytics will download it automatically on first run. No manual download is required.
+    </Note>
+  </Step>
+
+  <Step title="Verify the installation">
+    Run a quick import check to confirm PyTorch and Ultralytics are correctly installed:
+
+    ```bash
+    python -c "import torch; from ultralytics import YOLO; print('OK')"
+    ```
+
+    If you see `OK`, the environment is ready.
+
+    <Tip>
+      To confirm GPU availability, run `python -c "import torch; print(torch.cuda.is_available())"`.
+      If this prints `False` and you have a CUDA-capable GPU, ensure you installed the CUDA-enabled
+      build of PyTorch from [pytorch.org](https://pytorch.org/get-started/locally/).
+    </Tip>
+  </Step>
+</Steps>
